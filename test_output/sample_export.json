@@ -1,0 +1,22 @@
+[
+  {
+    "timestamp": "2026-01-23 12:00:00",
+    "sample_index": 0,
+    "retrieval_count": 3,
+    "total_retrieval_length": 1500,
+    "avg_retrieval_length": 500.0,
+    "global_step": 1,
+    "batch_idx": 0,
+    "phase": "training"
+  },
+  {
+    "timestamp": "2026-01-23 12:00:01",
+    "sample_index": 1,
+    "retrieval_count": 2,
+    "total_retrieval_length": 1000,
+    "avg_retrieval_length": 500.0,
+    "global_step": 1,
+    "batch_idx": 0,
+    "phase": "training"
+  }
+]

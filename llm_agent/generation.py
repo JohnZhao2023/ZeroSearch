@@ -346,6 +346,13 @@ class LLMGenerationManager:
         valid_search_stats = torch.zeros(gen_batch.batch['input_ids'].shape[0], dtype=torch.int)
         active_num_list = [active_mask.sum().item()]
         rollings = gen_batch
+        
+        # 新增：统计每个样本的检索信息
+        retrieval_stats = [{
+            'total_retrieval_length': 0,  # 总检索返回内容长度
+            'retrieval_count': 0,          # 检索次数
+            'retrieval_details': []        # 每次检索的详细信息
+        } for _ in range(gen_batch.batch['input_ids'].shape[0])]
 
         # Main generation loop
         for step in range(self.config.max_turns):
@@ -371,6 +378,19 @@ class LLMGenerationManager:
             next_obs, dones, valid_action, is_search = self.execute_predictions(
                 responses_str, gen_batch.non_tensor_batch['question'], gen_batch.non_tensor_batch['golden_answers'], search_mode, gt_threshold, active_mask
             )
+            
+            # 新增：统计检索信息
+            for idx in range(len(next_obs)):
+                if is_search[idx] == 1:  # 如果这次是检索操作
+                    retrieval_content = next_obs[idx]
+                    retrieval_length = len(retrieval_content)
+                    retrieval_stats[idx]['total_retrieval_length'] += retrieval_length
+                    retrieval_stats[idx]['retrieval_count'] += 1
+                    retrieval_stats[idx]['retrieval_details'].append({
+                        'turn': step + 1,
+                        'length': retrieval_length,
+                        'content_preview': retrieval_content[:100] if len(retrieval_content) > 100 else retrieval_content
+                    })
             
             curr_active_mask = torch.tensor([not done for done in dones], dtype=torch.bool)
             active_mask = active_mask * curr_active_mask
@@ -416,9 +436,22 @@ class LLMGenerationManager:
             responses_ids, responses_str = self.tensor_fn._example_level_pad(responses_ids, responses_str, active_mask)
 
             # # Execute in environment and process observations
-            _, dones, valid_action, is_search = self.execute_predictions(
+            final_obs, dones, valid_action, is_search = self.execute_predictions(
                 responses_str, gen_batch.non_tensor_batch['question'], gen_batch.non_tensor_batch['golden_answers'], search_mode, gt_threshold, active_mask
             )
+            
+            # 新增：统计最后一轮的检索信息
+            for idx in range(len(final_obs)):
+                if is_search[idx] == 1:  # 如果最后一轮也是检索操作
+                    retrieval_content = final_obs[idx]
+                    retrieval_length = len(retrieval_content)
+                    retrieval_stats[idx]['total_retrieval_length'] += retrieval_length
+                    retrieval_stats[idx]['retrieval_count'] += 1
+                    retrieval_stats[idx]['retrieval_details'].append({
+                        'turn': step + 2,  # 最后一轮
+                        'length': retrieval_length,
+                        'content_preview': retrieval_content[:100] if len(retrieval_content) > 100 else retrieval_content
+                    })
 
             curr_active_mask = torch.tensor([not done for done in dones], dtype=torch.bool)
             active_mask = active_mask * curr_active_mask
@@ -448,8 +481,17 @@ class LLMGenerationManager:
         for turns in range(1, self.config.max_turns + 2):
             count = (torch.tensor(trajectory_turns) == turns).sum().item()
             print(f"Finish at the {turns}-th turn: {count}")
+        
+        # 新增：打印检索统计信息
+        print("\n=== 检索统计信息 ===")
+        for idx, stats in enumerate(retrieval_stats):
+            if stats['retrieval_count'] > 0:
+                avg_length = stats['total_retrieval_length'] / stats['retrieval_count']
+                print(f"样本 {idx}: 检索次数={stats['retrieval_count']}, "
+                      f"总长度={stats['total_retrieval_length']}, "
+                      f"平均长度={avg_length:.2f}")
 
-        return self._compose_final_output(original_left_side, original_right_side, meta_info), trajectory_turns
+        return self._compose_final_output(original_left_side, original_right_side, meta_info), trajectory_turns, retrieval_stats
 
     def _compose_final_output(self, left_side: Dict,
                             right_side: Dict,

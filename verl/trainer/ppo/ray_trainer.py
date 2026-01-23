@@ -38,6 +38,7 @@ from verl.utils.seqlen_balancing import get_seqlen_balanced_partitions, log_seql
 
 import re
 from llm_agent.generation import LLMGenerationManager, GenerationConfig
+from llm_agent.stats_collector import get_global_collector
 
 from tqdm import tqdm
 import torch
@@ -353,6 +354,11 @@ class RayPPOTrainer(object):
         self.use_reference_policy = Role.RefPolicy in role_worker_mapping
         self.use_rm = Role.RewardModel in role_worker_mapping
         self.ray_worker_group_cls = ray_worker_group_cls
+        
+        # 初始化统计收集器
+        self.stats_collector = get_global_collector(
+            output_dir=os.path.join(config.trainer.default_local_dir, 'retrieval_stats')
+        )
 
         # define KL control
         if self.use_reference_policy:
@@ -531,13 +537,21 @@ class RayPPOTrainer(object):
                     first_input_ids = test_gen_batch.batch['input_ids'][:, -gen_config.max_start_length:].clone()
                     with _timer('gen', timing_raw):
                         generation_manager.timing_raw = timing_raw
-                        final_gen_batch_output, trajectory_turns = generation_manager.run_llm_loop(
+                        final_gen_batch_output, trajectory_turns, retrieval_stats = generation_manager.run_llm_loop(
                             gen_batch=test_gen_batch,
                             search_mode=self.config.retriever.search_engine,
                             initial_input_ids=first_input_ids,
                             current_step=self.global_steps,
                             total_steps=self.config.trainer.total_training_steps,
                         )
+                        
+                        # 收集统计数据
+                        batch_info = {
+                            'global_step': self.global_steps,
+                            'batch_idx': test_batch_idx,
+                            'phase': 'validation'
+                        }
+                        self.stats_collector.add_batch_stats(retrieval_stats, batch_info)
                     
                     test_batch = test_batch.union(final_gen_batch_output)
                     
@@ -588,6 +602,16 @@ class RayPPOTrainer(object):
         with open(identifier, 'w') as file:
             json.dump(all_inference_data, file)
 
+        # 验证结束时保存统计数据
+        if self.config.trainer.get('val_only', False):
+            print("\n" + "="*60)
+            print("验证完成，正在保存检索统计数据...")
+            print("="*60)
+            self.stats_collector.print_summary()
+            self.stats_collector.save_to_excel()
+            self.stats_collector.save_to_json()
+            print("="*60 + "\n")
+        
         return metric_dict
 
     def init_workers(self):
@@ -766,13 +790,21 @@ class RayPPOTrainer(object):
 
                         with _timer('gen', timing_raw):
                             generation_manager.timing_raw = timing_raw
-                            final_gen_batch_output, trajectory_turns = generation_manager.run_llm_loop(
+                            final_gen_batch_output, trajectory_turns, retrieval_stats = generation_manager.run_llm_loop(
                                 gen_batch=gen_batch,
                                 search_mode=self.config.retriever.search_mode,
                                 initial_input_ids=first_input_ids,
                                 current_step=self.global_steps,
                                 total_steps=self.config.trainer.total_training_steps,
                             )
+                            
+                            # 收集训练阶段的统计数据
+                            batch_info = {
+                                'global_step': self.global_steps,
+                                'batch_idx': batch_idx,
+                                'phase': 'training'
+                            }
+                            self.stats_collector.add_batch_stats(retrieval_stats, batch_info)
 
                         # final_gen_batch_output.batch.apply(lambda x: x.long(), inplace=True)
                         for key in final_gen_batch_output.batch.keys():
@@ -879,6 +911,14 @@ class RayPPOTrainer(object):
                 self.global_steps += 1
 
                 if self.global_steps >= self.total_training_steps:
+                    # 训练结束时保存统计数据
+                    print("\n" + "="*60)
+                    print("训练完成，正在保存检索统计数据...")
+                    print("="*60)
+                    self.stats_collector.print_summary()
+                    self.stats_collector.save_to_excel()
+                    self.stats_collector.save_to_json()
+                    print("="*60 + "\n")
                     return
     
     def _create_loss_mask(self, batch, metrics):
