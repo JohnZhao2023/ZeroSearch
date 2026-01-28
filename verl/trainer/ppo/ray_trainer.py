@@ -521,6 +521,7 @@ class RayPPOTrainer(object):
                     test_batch.non_tensor_batch.get('data_source', ['unknown'] * reward_tensor_f1.shape[0]))
 
         else:
+            test_batch_idx = 0
             for batch_dict in tqdm(self.val_dataloader, desc="Testing"):
                 timing_raw = {}
                 test_batch: DataProto = DataProto.from_single_dict(batch_dict)
@@ -567,6 +568,8 @@ class RayPPOTrainer(object):
                     reward_tensor_lst_f1.append(reward_tensor_f1)
                     data_source_lst_em.append(test_batch.non_tensor_batch.get('data_source', ['unknown'] * reward_tensor_em.shape[0]))
                     data_source_lst_f1.append(test_batch.non_tensor_batch.get('data_source', ['unknown'] * reward_tensor_f1.shape[0]))
+                
+                test_batch_idx += 1
 
         reward_tensor_em = torch.cat([rw.sum(-1) for rw in reward_tensor_lst_em], dim=0).cpu()  # (batch_size,)
         reward_tensor_f1 = torch.cat([rw.sum(-1) for rw in reward_tensor_lst_f1], dim=0).cpu()  # (batch_size,)
@@ -765,6 +768,7 @@ class RayPPOTrainer(object):
 
         # start training loop
         for epoch in range(self.config.trainer.total_epochs):
+            batch_idx = 0
             for batch_dict in tqdm(self.train_dataloader, total=self.total_training_steps, desc="Training"):
                 print(f'epoch {epoch}, step {self.global_steps}')
                 metrics = {}
@@ -909,6 +913,7 @@ class RayPPOTrainer(object):
                 logger.log(data=metrics, step=self.global_steps)
 
                 self.global_steps += 1
+                batch_idx += 1
 
                 if self.global_steps >= self.total_training_steps:
                     # 训练结束时保存统计数据
