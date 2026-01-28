@@ -47,6 +47,8 @@ class RetrievalStatsCollector:
                 'retrieval_count': stats['retrieval_count'],
                 'total_retrieval_length': stats['total_retrieval_length'],
                 'avg_retrieval_length': avg_length,
+                'query': stats.get('query', ''),  # 添加query字段
+                'ground_truth': str(stats.get('ground_truth', '')),  # 添加标准答案字段
             }
             
             # 添加批次信息
@@ -57,7 +59,7 @@ class RetrievalStatsCollector:
     
     def get_aggregated_stats(self) -> pd.DataFrame:
         """
-        获取聚合统计数据
+        获取聚合统计数据（按检索次数分组）
         
         Returns:
             包含聚合统计的DataFrame
@@ -79,6 +81,40 @@ class RetrievalStatsCollector:
                 'retrieval_count',
                 'total_length_mean', 'total_length_std', 'total_length_min', 'total_length_max', 'sample_count',
                 'avg_length_mean', 'avg_length_std', 'avg_length_min', 'avg_length_max'
+            ]
+            
+            return grouped
+        
+        return df
+    
+    def get_step_aggregated_stats(self) -> pd.DataFrame:
+        """
+        获取按步数聚合的统计数据
+        
+        Returns:
+            包含按global_step聚合统计的DataFrame
+        """
+        if not self.all_stats:
+            return pd.DataFrame()
+        
+        df = pd.DataFrame(self.all_stats)
+        
+        # 按global_step分组统计
+        if 'global_step' in df.columns:
+            grouped = df.groupby('global_step').agg({
+                'retrieval_count': ['mean', 'std', 'min', 'max'],
+                'total_retrieval_length': ['mean', 'std', 'min', 'max'],
+                'avg_retrieval_length': ['mean', 'std', 'min', 'max'],
+                'sample_index': 'count'  # 样本数量
+            }).reset_index()
+            
+            # 重命名列
+            grouped.columns = [
+                'global_step',
+                'retrieval_count_mean', 'retrieval_count_std', 'retrieval_count_min', 'retrieval_count_max',
+                'total_length_mean', 'total_length_std', 'total_length_min', 'total_length_max',
+                'avg_length_mean', 'avg_length_std', 'avg_length_min', 'avg_length_max',
+                'sample_count'
             ]
             
             return grouped
@@ -108,10 +144,15 @@ class RetrievalStatsCollector:
             df_raw = pd.DataFrame(self.all_stats)
             df_raw.to_excel(writer, sheet_name='原始数据', index=False)
             
-            # 聚合统计
+            # 按检索次数聚合统计
             df_agg = self.get_aggregated_stats()
             if not df_agg.empty:
-                df_agg.to_excel(writer, sheet_name='聚合统计', index=False)
+                df_agg.to_excel(writer, sheet_name='按检索次数聚合', index=False)
+            
+            # 按训练步数聚合统计（新增）
+            df_step_agg = self.get_step_aggregated_stats()
+            if not df_step_agg.empty:
+                df_step_agg.to_excel(writer, sheet_name='按训练步数聚合', index=False)
             
             # 按检索次数统计（如果有数据）
             if not df_raw.empty and 'retrieval_count' in df_raw.columns:
@@ -172,6 +213,12 @@ class RetrievalStatsCollector:
             if not valid_df.empty:
                 print(f"\n平均每轮检索返回内容长度: {valid_df['avg_retrieval_length'].mean():.2f}")
                 print(f"长度范围: {valid_df['avg_retrieval_length'].min():.2f} - {valid_df['avg_retrieval_length'].max():.2f}")
+        
+        # 新增：按训练步数统计
+        if 'global_step' in df.columns and df['global_step'].nunique() > 1:
+            print(f"\n训练步数统计:")
+            print(f"  训练步数范围: {df['global_step'].min()} - {df['global_step'].max()}")
+            print(f"  不同步数: {df['global_step'].nunique()} 个")
         
         print("=" * 60 + "\n")
     

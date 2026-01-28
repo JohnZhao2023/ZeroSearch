@@ -351,8 +351,10 @@ class LLMGenerationManager:
         retrieval_stats = [{
             'total_retrieval_length': 0,  # 总检索返回内容长度
             'retrieval_count': 0,          # 检索次数
-            'retrieval_details': []        # 每次检索的详细信息
-        } for _ in range(gen_batch.batch['input_ids'].shape[0])]
+            'retrieval_details': [],       # 每次检索的详细信息
+            'query': gen_batch.non_tensor_batch['question'][idx],  # 问题
+            'ground_truth': gen_batch.non_tensor_batch['golden_answers'][idx] if 'golden_answers' in gen_batch.non_tensor_batch else None  # 标准答案
+        } for idx in range(gen_batch.batch['input_ids'].shape[0])]
 
         # Main generation loop
         for step in range(self.config.max_turns):
