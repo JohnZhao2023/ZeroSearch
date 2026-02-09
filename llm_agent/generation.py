@@ -347,11 +347,11 @@ class LLMGenerationManager:
         active_num_list = [active_mask.sum().item()]
         rollings = gen_batch
         
-        # 新增：统计每个样本的检索信息
+        # 新增：统计每个样本的检索信息（改为统计response长度）
         retrieval_stats = [{
-            'total_retrieval_length': 0,  # 总检索返回内容长度
-            'retrieval_count': 0,          # 检索次数
-            'retrieval_details': [],       # 每次检索的详细信息
+            'total_response_length': 0,    # 总模型生成response长度
+            'retrieval_count': 0,          # 检索次数（迭代次数）
+            'retrieval_details': [],       # 每次生成的详细信息
             'query': gen_batch.non_tensor_batch['question'][idx],  # 问题
             'ground_truth': gen_batch.non_tensor_batch['golden_answers'][idx] if 'golden_answers' in gen_batch.non_tensor_batch else None  # 标准答案
         } for idx in range(gen_batch.batch['input_ids'].shape[0])]
@@ -376,23 +376,23 @@ class LLMGenerationManager:
             responses_ids, responses_str = self._postprocess_responses(gen_output.batch['responses'])
             responses_ids, responses_str = self.tensor_fn._example_level_pad(responses_ids, responses_str, active_mask)
 
+            # 新增：统计模型生成的response长度（每轮都统计）
+            for idx in range(len(responses_str)):
+                if active_mask[idx]:  # 只统计活跃的样本
+                    response_text = responses_str[idx]
+                    response_length = len(response_text)
+                    retrieval_stats[idx]['total_response_length'] += response_length
+                    retrieval_stats[idx]['retrieval_count'] += 1
+                    retrieval_stats[idx]['retrieval_details'].append({
+                        'turn': step + 1,
+                        'length': response_length,
+                        'content_preview': response_text[:100] if len(response_text) > 100 else response_text
+                    })
+            
             # Execute in environment and process observations
             next_obs, dones, valid_action, is_search = self.execute_predictions(
                 responses_str, gen_batch.non_tensor_batch['question'], gen_batch.non_tensor_batch['golden_answers'], search_mode, gt_threshold, active_mask
             )
-            
-            # 新增：统计检索信息
-            for idx in range(len(next_obs)):
-                if is_search[idx] == 1:  # 如果这次是检索操作
-                    retrieval_content = next_obs[idx]
-                    retrieval_length = len(retrieval_content)
-                    retrieval_stats[idx]['total_retrieval_length'] += retrieval_length
-                    retrieval_stats[idx]['retrieval_count'] += 1
-                    retrieval_stats[idx]['retrieval_details'].append({
-                        'turn': step + 1,
-                        'length': retrieval_length,
-                        'content_preview': retrieval_content[:100] if len(retrieval_content) > 100 else retrieval_content
-                    })
             
             curr_active_mask = torch.tensor([not done for done in dones], dtype=torch.bool)
             active_mask = active_mask * curr_active_mask
@@ -437,23 +437,23 @@ class LLMGenerationManager:
             responses_ids, responses_str = self._postprocess_responses(gen_output.batch['responses'])
             responses_ids, responses_str = self.tensor_fn._example_level_pad(responses_ids, responses_str, active_mask)
 
+            # 新增：统计最后一轮的模型生成response长度
+            for idx in range(len(responses_str)):
+                if active_mask[idx]:  # 只统计活跃的样本
+                    response_text = responses_str[idx]
+                    response_length = len(response_text)
+                    retrieval_stats[idx]['total_response_length'] += response_length
+                    retrieval_stats[idx]['retrieval_count'] += 1
+                    retrieval_stats[idx]['retrieval_details'].append({
+                        'turn': step + 2,  # 最后一轮
+                        'length': response_length,
+                        'content_preview': response_text[:100] if len(response_text) > 100 else response_text
+                    })
+            
             # # Execute in environment and process observations
             final_obs, dones, valid_action, is_search = self.execute_predictions(
                 responses_str, gen_batch.non_tensor_batch['question'], gen_batch.non_tensor_batch['golden_answers'], search_mode, gt_threshold, active_mask
             )
-            
-            # 新增：统计最后一轮的检索信息
-            for idx in range(len(final_obs)):
-                if is_search[idx] == 1:  # 如果最后一轮也是检索操作
-                    retrieval_content = final_obs[idx]
-                    retrieval_length = len(retrieval_content)
-                    retrieval_stats[idx]['total_retrieval_length'] += retrieval_length
-                    retrieval_stats[idx]['retrieval_count'] += 1
-                    retrieval_stats[idx]['retrieval_details'].append({
-                        'turn': step + 2,  # 最后一轮
-                        'length': retrieval_length,
-                        'content_preview': retrieval_content[:100] if len(retrieval_content) > 100 else retrieval_content
-                    })
 
             curr_active_mask = torch.tensor([not done for done in dones], dtype=torch.bool)
             active_mask = active_mask * curr_active_mask
@@ -484,14 +484,14 @@ class LLMGenerationManager:
             count = (torch.tensor(trajectory_turns) == turns).sum().item()
             print(f"Finish at the {turns}-th turn: {count}")
         
-        # 新增：打印检索统计信息
-        print("\n=== 检索统计信息 ===")
+        # 新增：打印response统计信息
+        print("\n=== Response生成统计信息 ===")
         for idx, stats in enumerate(retrieval_stats):
             if stats['retrieval_count'] > 0:
-                avg_length = stats['total_retrieval_length'] / stats['retrieval_count']
-                print(f"样本 {idx}: 检索次数={stats['retrieval_count']}, "
-                      f"总长度={stats['total_retrieval_length']}, "
-                      f"平均长度={avg_length:.2f}")
+                avg_length = stats['total_response_length'] / stats['retrieval_count']
+                print(f"样本 {idx}: 迭代次数={stats['retrieval_count']}, "
+                      f"总response长度={stats['total_response_length']}, "
+                      f"平均每轮response长度={avg_length:.2f}")
 
         return self._compose_final_output(original_left_side, original_right_side, meta_info), trajectory_turns, retrieval_stats
 

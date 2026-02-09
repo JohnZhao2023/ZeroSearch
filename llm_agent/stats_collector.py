@@ -35,18 +35,18 @@ class RetrievalStatsCollector:
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         for idx, stats in enumerate(retrieval_stats):
-            # 计算平均长度
+            # 计算平均长度（改为response长度）
             if stats['retrieval_count'] > 0:
-                avg_length = stats['total_retrieval_length'] / stats['retrieval_count']
+                avg_length = stats['total_response_length'] / stats['retrieval_count']
             else:
                 avg_length = 0
             
             record = {
                 'timestamp': timestamp,
                 'sample_index': idx,
-                'retrieval_count': stats['retrieval_count'],
-                'total_retrieval_length': stats['total_retrieval_length'],
-                'avg_retrieval_length': avg_length,
+                'retrieval_count': stats['retrieval_count'],  # 迭代次数
+                'total_response_length': stats['total_response_length'],  # 总response长度
+                'avg_response_length': avg_length,  # 平均每轮response长度
                 'query': stats.get('query', ''),  # 添加query字段
                 'ground_truth': str(stats.get('ground_truth', '')),  # 添加标准答案字段
             }
@@ -59,7 +59,7 @@ class RetrievalStatsCollector:
     
     def get_aggregated_stats(self) -> pd.DataFrame:
         """
-        获取聚合统计数据（按检索次数分组）
+        获取聚合统计数据（按迭代次数分组）
         
         Returns:
             包含聚合统计的DataFrame
@@ -69,11 +69,11 @@ class RetrievalStatsCollector:
         
         df = pd.DataFrame(self.all_stats)
         
-        # 按检索次数分组统计
+        # 按迭代次数分组统计
         if 'retrieval_count' in df.columns:
             grouped = df.groupby('retrieval_count').agg({
-                'total_retrieval_length': ['mean', 'std', 'min', 'max', 'count'],
-                'avg_retrieval_length': ['mean', 'std', 'min', 'max']
+                'total_response_length': ['mean', 'std', 'min', 'max', 'count'],
+                'avg_response_length': ['mean', 'std', 'min', 'max']
             }).reset_index()
             
             # 重命名列
@@ -103,8 +103,8 @@ class RetrievalStatsCollector:
         if 'global_step' in df.columns:
             grouped = df.groupby('global_step').agg({
                 'retrieval_count': ['mean', 'std', 'min', 'max'],
-                'total_retrieval_length': ['mean', 'std', 'min', 'max'],
-                'avg_retrieval_length': ['mean', 'std', 'min', 'max'],
+                'total_response_length': ['mean', 'std', 'min', 'max'],
+                'avg_response_length': ['mean', 'std', 'min', 'max'],
                 'sample_index': 'count'  # 样本数量
             }).reset_index()
             
@@ -144,20 +144,20 @@ class RetrievalStatsCollector:
             df_raw = pd.DataFrame(self.all_stats)
             df_raw.to_excel(writer, sheet_name='原始数据', index=False)
             
-            # 按检索次数聚合统计
+            # 按迭代次数聚合统计
             df_agg = self.get_aggregated_stats()
             if not df_agg.empty:
-                df_agg.to_excel(writer, sheet_name='按检索次数聚合', index=False)
+                df_agg.to_excel(writer, sheet_name='按迭代次数聚合', index=False)
             
             # 按训练步数聚合统计（新增）
             df_step_agg = self.get_step_aggregated_stats()
             if not df_step_agg.empty:
                 df_step_agg.to_excel(writer, sheet_name='按训练步数聚合', index=False)
             
-            # 按检索次数统计（如果有数据）
+            # 按迭代次数统计（如果有数据）
             if not df_raw.empty and 'retrieval_count' in df_raw.columns:
                 turns_stats = df_raw.groupby('retrieval_count').size().reset_index(name='样本数量')
-                turns_stats.to_excel(writer, sheet_name='检索次数分布', index=False)
+                turns_stats.to_excel(writer, sheet_name='迭代次数分布', index=False)
         
         print(f"统计数据已保存到: {output_path}")
         return output_path
@@ -199,20 +199,20 @@ class RetrievalStatsCollector:
         print(f"总样本数: {len(df)}")
         
         if 'retrieval_count' in df.columns:
-            print(f"\n平均检索次数: {df['retrieval_count'].mean():.2f}")
-            print(f"检索次数范围: {df['retrieval_count'].min()} - {df['retrieval_count'].max()}")
+            print(f"\n平均迭代次数: {df['retrieval_count'].mean():.2f}")
+            print(f"迭代次数范围: {df['retrieval_count'].min()} - {df['retrieval_count'].max()}")
             
-            print("\n按检索次数分布:")
+            print("\n按迭代次数分布:")
             for count in sorted(df['retrieval_count'].unique()):
                 num_samples = (df['retrieval_count'] == count).sum()
                 percentage = num_samples / len(df) * 100
-                print(f"  检索 {count} 次: {num_samples} 个样本 ({percentage:.1f}%)")
+                print(f"  迭代 {count} 次: {num_samples} 个样本 ({percentage:.1f}%)")
         
-        if 'avg_retrieval_length' in df.columns:
+        if 'avg_response_length' in df.columns:
             valid_df = df[df['retrieval_count'] > 0]
             if not valid_df.empty:
-                print(f"\n平均每轮检索返回内容长度: {valid_df['avg_retrieval_length'].mean():.2f}")
-                print(f"长度范围: {valid_df['avg_retrieval_length'].min():.2f} - {valid_df['avg_retrieval_length'].max():.2f}")
+                print(f"\n平均每轮response长度: {valid_df['avg_response_length'].mean():.2f}")
+                print(f"长度范围: {valid_df['avg_response_length'].min():.2f} - {valid_df['avg_response_length'].max():.2f}")
         
         # 新增：按训练步数统计
         if 'global_step' in df.columns and df['global_step'].nunique() > 1:
