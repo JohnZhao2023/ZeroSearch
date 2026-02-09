@@ -35,18 +35,14 @@ class RetrievalStatsCollector:
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         for idx, stats in enumerate(retrieval_stats):
-            # 计算平均长度（改为response长度）
-            if stats['retrieval_count'] > 0:
-                avg_length = stats['total_response_length'] / stats['retrieval_count']
-            else:
-                avg_length = 0
+            # 获取最后一轮的response长度（不再计算平均）
+            final_length = stats.get('final_response_length', 0)
             
             record = {
                 'timestamp': timestamp,
                 'sample_index': idx,
                 'retrieval_count': stats['retrieval_count'],  # 迭代次数
-                'total_response_length': stats['total_response_length'],  # 总response长度
-                'avg_response_length': avg_length,  # 平均每轮response长度
+                'final_response_length': final_length,  # 最后一轮response长度
                 'query': stats.get('query', ''),  # 添加query字段
                 'ground_truth': str(stats.get('ground_truth', '')),  # 添加标准答案字段
             }
@@ -72,15 +68,14 @@ class RetrievalStatsCollector:
         # 按迭代次数分组统计
         if 'retrieval_count' in df.columns:
             grouped = df.groupby('retrieval_count').agg({
-                'total_response_length': ['mean', 'std', 'min', 'max', 'count'],
-                'avg_response_length': ['mean', 'std', 'min', 'max']
+                'final_response_length': ['mean', 'std', 'min', 'max', 'count']
             }).reset_index()
             
             # 重命名列
             grouped.columns = [
                 'retrieval_count',
-                'total_length_mean', 'total_length_std', 'total_length_min', 'total_length_max', 'sample_count',
-                'avg_length_mean', 'avg_length_std', 'avg_length_min', 'avg_length_max'
+                'final_response_length_mean', 'final_response_length_std', 
+                'final_response_length_min', 'final_response_length_max', 'sample_count'
             ]
             
             return grouped
@@ -103,8 +98,7 @@ class RetrievalStatsCollector:
         if 'global_step' in df.columns:
             grouped = df.groupby('global_step').agg({
                 'retrieval_count': ['mean', 'std', 'min', 'max'],
-                'total_response_length': ['mean', 'std', 'min', 'max'],
-                'avg_response_length': ['mean', 'std', 'min', 'max'],
+                'final_response_length': ['mean', 'std', 'min', 'max'],
                 'sample_index': 'count'  # 样本数量
             }).reset_index()
             
@@ -112,8 +106,8 @@ class RetrievalStatsCollector:
             grouped.columns = [
                 'global_step',
                 'retrieval_count_mean', 'retrieval_count_std', 'retrieval_count_min', 'retrieval_count_max',
-                'total_length_mean', 'total_length_std', 'total_length_min', 'total_length_max',
-                'avg_length_mean', 'avg_length_std', 'avg_length_min', 'avg_length_max',
+                'final_response_length_mean', 'final_response_length_std', 
+                'final_response_length_min', 'final_response_length_max',
                 'sample_count'
             ]
             
@@ -208,11 +202,11 @@ class RetrievalStatsCollector:
                 percentage = num_samples / len(df) * 100
                 print(f"  迭代 {count} 次: {num_samples} 个样本 ({percentage:.1f}%)")
         
-        if 'avg_response_length' in df.columns:
+        if 'final_response_length' in df.columns:
             valid_df = df[df['retrieval_count'] > 0]
             if not valid_df.empty:
-                print(f"\n平均每轮response长度: {valid_df['avg_response_length'].mean():.2f}")
-                print(f"长度范围: {valid_df['avg_response_length'].min():.2f} - {valid_df['avg_response_length'].max():.2f}")
+                print(f"\n平均最后一轮response长度: {valid_df['final_response_length'].mean():.2f}")
+                print(f"长度范围: {valid_df['final_response_length'].min():.2f} - {valid_df['final_response_length'].max():.2f}")
         
         # 新增：按训练步数统计
         if 'global_step' in df.columns and df['global_step'].nunique() > 1:

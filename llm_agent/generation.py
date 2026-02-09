@@ -347,9 +347,9 @@ class LLMGenerationManager:
         active_num_list = [active_mask.sum().item()]
         rollings = gen_batch
         
-        # 新增：统计每个样本的检索信息（改为统计response长度）
+        # 新增：统计每个样本的检索信息（只统计最后一轮response长度）
         retrieval_stats = [{
-            'total_response_length': 0,    # 总模型生成response长度
+            'final_response_length': 0,    # 最后一轮response长度
             'retrieval_count': 0,          # 检索次数（迭代次数）
             'retrieval_details': [],       # 每次生成的详细信息
             'query': gen_batch.non_tensor_batch['question'][idx],  # 问题
@@ -376,13 +376,13 @@ class LLMGenerationManager:
             responses_ids, responses_str = self._postprocess_responses(gen_output.batch['responses'])
             responses_ids, responses_str = self.tensor_fn._example_level_pad(responses_ids, responses_str, active_mask)
 
-            # 新增：统计模型生成的response长度（每轮都统计）
+            # 新增：记录当前轮的response长度（每轮覆盖，最终保留最后一轮）
             for idx in range(len(responses_str)):
                 if active_mask[idx]:  # 只统计活跃的样本
                     response_text = responses_str[idx]
                     response_length = len(response_text)
-                    retrieval_stats[idx]['total_response_length'] += response_length
-                    retrieval_stats[idx]['retrieval_count'] += 1
+                    retrieval_stats[idx]['final_response_length'] = response_length  # 覆盖，不累加
+                    retrieval_stats[idx]['retrieval_count'] = step + 1  # 记录当前轮次
                     retrieval_stats[idx]['retrieval_details'].append({
                         'turn': step + 1,
                         'length': response_length,
@@ -437,13 +437,13 @@ class LLMGenerationManager:
             responses_ids, responses_str = self._postprocess_responses(gen_output.batch['responses'])
             responses_ids, responses_str = self.tensor_fn._example_level_pad(responses_ids, responses_str, active_mask)
 
-            # 新增：统计最后一轮的模型生成response长度
+            # 新增：记录最后一轮的response长度
             for idx in range(len(responses_str)):
                 if active_mask[idx]:  # 只统计活跃的样本
                     response_text = responses_str[idx]
                     response_length = len(response_text)
-                    retrieval_stats[idx]['total_response_length'] += response_length
-                    retrieval_stats[idx]['retrieval_count'] += 1
+                    retrieval_stats[idx]['final_response_length'] = response_length  # 覆盖为最后一轮
+                    retrieval_stats[idx]['retrieval_count'] = step + 2  # 记录总轮次
                     retrieval_stats[idx]['retrieval_details'].append({
                         'turn': step + 2,  # 最后一轮
                         'length': response_length,
@@ -488,10 +488,8 @@ class LLMGenerationManager:
         print("\n=== Response生成统计信息 ===")
         for idx, stats in enumerate(retrieval_stats):
             if stats['retrieval_count'] > 0:
-                avg_length = stats['total_response_length'] / stats['retrieval_count']
                 print(f"样本 {idx}: 迭代次数={stats['retrieval_count']}, "
-                      f"总response长度={stats['total_response_length']}, "
-                      f"平均每轮response长度={avg_length:.2f}")
+                      f"最后一轮response长度={stats['final_response_length']}")
 
         return self._compose_final_output(original_left_side, original_right_side, meta_info), trajectory_turns, retrieval_stats
 
