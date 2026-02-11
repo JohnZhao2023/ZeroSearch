@@ -809,6 +809,9 @@ class RayPPOTrainer(object):
                                 'phase': 'training'
                             }
                             self.stats_collector.add_batch_stats(retrieval_stats, batch_info)
+                            
+                            # 实时保存当前step的统计（新增）
+                            self.stats_collector.save_step_realtime(self.global_steps)
 
                         # final_gen_batch_output.batch.apply(lambda x: x.long(), inplace=True)
                         for key in final_gen_batch_output.batch.keys():
@@ -918,11 +921,14 @@ class RayPPOTrainer(object):
                 if self.global_steps >= self.total_training_steps:
                     # 训练结束时保存统计数据
                     print("\n" + "="*60)
-                    print("训练完成，正在保存检索统计数据...")
+                    print("训练完成，正在保存完整统计数据...")
                     print("="*60)
                     self.stats_collector.print_summary()
-                    self.stats_collector.save_to_excel()
-                    self.stats_collector.save_to_json()
+                    final_excel = self.stats_collector.save_to_excel()
+                    final_json = self.stats_collector.save_to_json()
+                    print(f"\n实时统计文件（按step聚合）: {self.stats_collector.realtime_file}")
+                    print(f"完整统计文件（所有工作表）: {final_excel}")
+                    print(f"JSON文件: {final_json}")
                     print("="*60 + "\n")
                     return
     

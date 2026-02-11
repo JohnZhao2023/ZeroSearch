@@ -20,6 +20,8 @@ class RetrievalStatsCollector:
         """
         self.output_dir = output_dir
         self.all_stats = []  # 存储所有批次的统计数据
+        self.current_step_stats = {}  # 当前step的统计数据（用于实时更新）
+        self.realtime_file = None  # 实时更新的Excel文件路径
         
         # 创建输出目录
         os.makedirs(output_dir, exist_ok=True)
@@ -114,6 +116,73 @@ class RetrievalStatsCollector:
             return grouped
         
         return df
+    
+    def save_step_realtime(self, global_step: int, phase='training'):
+        """
+        实时保存当前step的统计数据到Excel
+        每个step完成后调用此方法，追加一行统计结果
+        
+        Args:
+            global_step: 当前训练步数
+            phase: 训练阶段（training/validation）
+        """
+        # 筛选当前step的数据
+        current_step_data = [s for s in self.all_stats 
+                           if s.get('global_step') == global_step 
+                           and s.get('phase') == phase]
+        
+        if not current_step_data:
+            return
+        
+        # 计算当前step的聚合统计
+        retrieval_counts = [s['retrieval_count'] for s in current_step_data]
+        final_lengths = [s['final_response_length'] for s in current_step_data]
+        
+        # 计算统计量
+        import numpy as np
+        step_record = {
+            'global_step': global_step,
+            'phase': phase,
+            'retrieval_count_mean': float(np.mean(retrieval_counts)) if retrieval_counts else 0,
+            'retrieval_count_std': float(np.std(retrieval_counts)) if len(retrieval_counts) > 1 else 0,
+            'retrieval_count_min': int(np.min(retrieval_counts)) if retrieval_counts else 0,
+            'retrieval_count_max': int(np.max(retrieval_counts)) if retrieval_counts else 0,
+            'final_response_length_mean': float(np.mean(final_lengths)) if final_lengths else 0,
+            'final_response_length_std': float(np.std(final_lengths)) if len(final_lengths) > 1 else 0,
+            'final_response_length_min': float(np.min(final_lengths)) if final_lengths else 0,
+            'final_response_length_max': float(np.max(final_lengths)) if final_lengths else 0,
+            'sample_count': len(current_step_data),
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        # 初始化实时文件路径（每次运行创建新文件）
+        if self.realtime_file is None:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            self.realtime_file = os.path.join(self.output_dir, f'realtime_step_stats_{timestamp}.xlsx')
+        
+        # 读取现有数据并追加（如果文件存在）
+        if os.path.exists(self.realtime_file):
+            try:
+                existing_df = pd.read_excel(self.realtime_file, engine='openpyxl')
+                # 检查是否已存在当前step的记录（避免重复）
+                if not ((existing_df['global_step'] == global_step) & (existing_df['phase'] == phase)).any():
+                    new_df = pd.DataFrame([step_record])
+                    combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+                else:
+                    print(f"⚠ Step {global_step} ({phase}) 已存在，跳过")
+                    return
+            except Exception as e:
+                print(f"⚠ 读取现有文件失败: {e}，创建新文件")
+                combined_df = pd.DataFrame([step_record])
+        else:
+            combined_df = pd.DataFrame([step_record])
+        
+        # 保存到Excel
+        try:
+            combined_df.to_excel(self.realtime_file, index=False, engine='openpyxl')
+            print(f"✓ Step {global_step} ({phase}) 统计已实时保存 | 最后一轮response平均长度: {step_record['final_response_length_mean']:.2f}")
+        except Exception as e:
+            print(f"✗ 实时保存失败: {e}")
     
     def save_to_excel(self, filename=None):
         """
