@@ -45,8 +45,9 @@ class RetrievalStatsCollector:
                 'sample_index': idx,
                 'retrieval_count': stats['retrieval_count'],  # 迭代次数
                 'final_response_length': final_length,  # 最后一轮response长度
-                'query': stats.get('query', ''),  # 添加query字段
-                'ground_truth': str(stats.get('ground_truth', '')),  # 添加标准答案字段
+                'query': stats.get('query', ''),
+                'ground_truth': str(stats.get('ground_truth', '')),
+                'full_trajectory': stats.get('full_trajectory', ''),  # 完整多轮交互记录
             }
             
             # 添加批次信息
@@ -138,6 +139,17 @@ class RetrievalStatsCollector:
         retrieval_counts = [s['retrieval_count'] for s in current_step_data]
         final_lengths = [s['final_response_length'] for s in current_step_data]
         
+        # 挑选一个有完整交互记录的样本作为输出示例
+        sample_output = ''
+        for s in current_step_data:
+            trajectory = s.get('full_trajectory', '')
+            if trajectory:
+                sample_output = f"【问题】{s.get('query', '')}\n\n{trajectory}"
+                gt = s.get('ground_truth', '')
+                if gt:
+                    sample_output += f"【标准答案】{gt}\n"
+                break
+        
         # 计算统计量
         import numpy as np
         step_record = {
@@ -152,7 +164,8 @@ class RetrievalStatsCollector:
             'final_response_length_min': float(np.min(final_lengths)) if final_lengths else 0,
             'final_response_length_max': float(np.max(final_lengths)) if final_lengths else 0,
             'sample_count': len(current_step_data),
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'sample_output': sample_output,
         }
         
         # 初始化实时文件路径（每次运行创建新文件）

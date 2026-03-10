@@ -353,7 +353,8 @@ class LLMGenerationManager:
             'retrieval_count': 0,          # 检索次数（迭代次数）
             'retrieval_details': [],       # 每次生成的详细信息
             'query': gen_batch.non_tensor_batch['question'][idx],  # 问题
-            'ground_truth': gen_batch.non_tensor_batch['golden_answers'][idx] if 'golden_answers' in gen_batch.non_tensor_batch else None  # 标准答案
+            'ground_truth': gen_batch.non_tensor_batch['golden_answers'][idx] if 'golden_answers' in gen_batch.non_tensor_batch else None,  # 标准答案
+            'full_trajectory': ''          # 完整多轮交互记录
         } for idx in range(gen_batch.batch['input_ids'].shape[0])]
 
         # Main generation loop
@@ -378,21 +379,28 @@ class LLMGenerationManager:
 
             # 新增：记录当前轮的response长度（每轮覆盖，最终保留最后一轮）
             for idx in range(len(responses_str)):
-                if active_mask[idx]:  # 只统计活跃的样本
+                if active_mask[idx]:
                     response_text = responses_str[idx]
                     response_length = len(response_text)
-                    retrieval_stats[idx]['final_response_length'] = response_length  # 覆盖，不累加
-                    retrieval_stats[idx]['retrieval_count'] = step + 1  # 记录当前轮次
+                    retrieval_stats[idx]['final_response_length'] = response_length
+                    retrieval_stats[idx]['retrieval_count'] = step + 1
                     retrieval_stats[idx]['retrieval_details'].append({
                         'turn': step + 1,
                         'length': response_length,
                         'content_preview': response_text[:100] if len(response_text) > 100 else response_text
                     })
+                    # 记录本轮模型生成内容到完整轨迹
+                    retrieval_stats[idx]['full_trajectory'] += f'【第{step+1}轮 - 模型生成】\n{response_text}\n\n'
             
             # Execute in environment and process observations
             next_obs, dones, valid_action, is_search = self.execute_predictions(
                 responses_str, gen_batch.non_tensor_batch['question'], gen_batch.non_tensor_batch['golden_answers'], search_mode, gt_threshold, active_mask
             )
+            
+            # 记录本轮检索结果到完整轨迹
+            for idx in range(len(next_obs)):
+                if active_mask[idx] and next_obs[idx]:
+                    retrieval_stats[idx]['full_trajectory'] += f'【第{step+1}轮 - 检索结果】\n{next_obs[idx]}\n\n'
             
             curr_active_mask = torch.tensor([not done for done in dones], dtype=torch.bool)
             active_mask = active_mask * curr_active_mask
@@ -439,16 +447,18 @@ class LLMGenerationManager:
 
             # 新增：记录最后一轮的response长度
             for idx in range(len(responses_str)):
-                if active_mask[idx]:  # 只统计活跃的样本
+                if active_mask[idx]:
                     response_text = responses_str[idx]
                     response_length = len(response_text)
-                    retrieval_stats[idx]['final_response_length'] = response_length  # 覆盖为最后一轮
-                    retrieval_stats[idx]['retrieval_count'] = step + 2  # 记录总轮次
+                    retrieval_stats[idx]['final_response_length'] = response_length
+                    retrieval_stats[idx]['retrieval_count'] = step + 2
                     retrieval_stats[idx]['retrieval_details'].append({
-                        'turn': step + 2,  # 最后一轮
+                        'turn': step + 2,
                         'length': response_length,
                         'content_preview': response_text[:100] if len(response_text) > 100 else response_text
                     })
+                    # 记录最后一轮模型生成内容到完整轨迹
+                    retrieval_stats[idx]['full_trajectory'] += f'【第{step+2}轮 - 模型生成（最后一轮）】\n{response_text}\n\n'
             
             # # Execute in environment and process observations
             final_obs, dones, valid_action, is_search = self.execute_predictions(
