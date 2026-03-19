@@ -347,15 +347,19 @@ class LLMGenerationManager:
         active_num_list = [active_mask.sum().item()]
         rollings = gen_batch
         
+        batch_size = gen_batch.batch['input_ids'].shape[0]
+        # 每个样本独立的轮次计数器
+        sample_turn_count = [0] * batch_size
+        
         # 新增：统计每个样本的检索信息（只统计最后一轮response长度）
         retrieval_stats = [{
             'final_response_length': 0,    # 最后一轮response长度
-            'retrieval_count': 0,          # 检索次数（迭代次数）
+            'retrieval_count': 0,          # 迭代次数（样本自身）
             'retrieval_details': [],       # 每次生成的详细信息
             'query': gen_batch.non_tensor_batch['question'][idx],  # 问题
             'ground_truth': gen_batch.non_tensor_batch['golden_answers'][idx] if 'golden_answers' in gen_batch.non_tensor_batch else None,  # 标准答案
             'full_trajectory': ''          # 完整多轮交互记录
-        } for idx in range(gen_batch.batch['input_ids'].shape[0])]
+        } for idx in range(batch_size)]
 
         # Main generation loop
         for step in range(self.config.max_turns):
@@ -380,17 +384,18 @@ class LLMGenerationManager:
             # 新增：记录当前轮的response长度（每轮覆盖，最终保留最后一轮）
             for idx in range(len(responses_str)):
                 if active_mask[idx]:
+                    sample_turn_count[idx] += 1
+                    turn = sample_turn_count[idx]
                     response_text = responses_str[idx]
                     response_length = len(response_text)
                     retrieval_stats[idx]['final_response_length'] = response_length
-                    retrieval_stats[idx]['retrieval_count'] = step + 1
+                    retrieval_stats[idx]['retrieval_count'] = turn
                     retrieval_stats[idx]['retrieval_details'].append({
-                        'turn': step + 1,
+                        'turn': turn,
                         'length': response_length,
                         'content_preview': response_text[:100] if len(response_text) > 100 else response_text
                     })
-                    # 记录本轮模型生成内容到完整轨迹
-                    retrieval_stats[idx]['full_trajectory'] += f'【第{step+1}轮 - 模型生成】\n{response_text}\n\n'
+                    retrieval_stats[idx]['full_trajectory'] += f'【第{turn}轮 - 模型生成】\n{response_text}\n\n'
             
             # Execute in environment and process observations
             next_obs, dones, valid_action, is_search = self.execute_predictions(
@@ -400,7 +405,8 @@ class LLMGenerationManager:
             # 记录本轮检索结果到完整轨迹
             for idx in range(len(next_obs)):
                 if active_mask[idx] and next_obs[idx]:
-                    retrieval_stats[idx]['full_trajectory'] += f'【第{step+1}轮 - 检索结果】\n{next_obs[idx]}\n\n'
+                    turn = sample_turn_count[idx]
+                    retrieval_stats[idx]['full_trajectory'] += f'【第{turn}轮 - 检索结果】\n{next_obs[idx]}\n\n'
             
             curr_active_mask = torch.tensor([not done for done in dones], dtype=torch.bool)
             active_mask = active_mask * curr_active_mask
@@ -448,17 +454,18 @@ class LLMGenerationManager:
             # 新增：记录最后一轮的response长度
             for idx in range(len(responses_str)):
                 if active_mask[idx]:
+                    sample_turn_count[idx] += 1
+                    turn = sample_turn_count[idx]
                     response_text = responses_str[idx]
                     response_length = len(response_text)
                     retrieval_stats[idx]['final_response_length'] = response_length
-                    retrieval_stats[idx]['retrieval_count'] = step + 2
+                    retrieval_stats[idx]['retrieval_count'] = turn
                     retrieval_stats[idx]['retrieval_details'].append({
-                        'turn': step + 2,
+                        'turn': turn,
                         'length': response_length,
                         'content_preview': response_text[:100] if len(response_text) > 100 else response_text
                     })
-                    # 记录最后一轮模型生成内容到完整轨迹
-                    retrieval_stats[idx]['full_trajectory'] += f'【第{step+2}轮 - 模型生成（最后一轮）】\n{response_text}\n\n'
+                    retrieval_stats[idx]['full_trajectory'] += f'【第{turn}轮 - 模型生成（最后一轮）】\n{response_text}\n\n'
             
             # # Execute in environment and process observations
             final_obs, dones, valid_action, is_search = self.execute_predictions(
